@@ -707,15 +707,19 @@ fi
 
 # Baron Samedit
 echo -e "\n${YELLOW}[+] ${NC}Baron Samedit (CVE-2021-3156):"
-sudo_version=$(sudo -V 2>/dev/null | head -1 | cut -d " " -f3)
+sudo_version=$(sudo --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9p]+')
+if [ -z "$sudo_version" ]; then
+    sudo_version=$(dpkg -l sudo 2>/dev/null | grep ^ii | awk '{print $3}' | cut -d- -f1 | cut -d: -f2)
+fi
+if [ -z "$sudo_version" ]; then
+    sudo_version=$(rpm -q sudo 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9p]+' | head -1)
+fi
 if [ ! -z "$sudo_version" ]; then
     echo -e "  sudo version: ${CYAN}$sudo_version${NC}"
-    # Non-interactive test — check version range instead of running sudoedit
     sudo_major=$(echo "$sudo_version" | cut -d. -f1)
     sudo_minor=$(echo "$sudo_version" | cut -d. -f2)
     sudo_patch=$(echo "$sudo_version" | cut -d. -f3 | sed 's/p.*//')
     vulnerable=0
-    # Vulnerable: 1.8.2 through 1.8.31p2, and 1.9.0 through 1.9.5p1
     if [ "$sudo_major" = "1" ] && [ "$sudo_minor" = "8" ]; then
         if [ "${sudo_patch:-0}" -ge 2 ] && [ "${sudo_patch:-0}" -le 31 ]; then
             vulnerable=1
