@@ -886,7 +886,10 @@ if [ ! -z "$suid_files" ]; then
             get_exploit "$bin" suid
             echo ""
             exploitable_suid=1
-            log_finding "CRITICAL" "SUID exploitable: $file → run get_exploit for command"
+            # Don't log standard binaries that need password (su, passwd, sudo)
+            if [ "$bin" != "su" ] && [ "$bin" != "passwd" ] && [ "$bin" != "sudo" ]; then
+                log_finding "CRITICAL" "SUID exploitable: $file"
+            fi
         fi
     done <<< "$suid_files"
 
@@ -1130,6 +1133,7 @@ find /home /root -name ".bash_history" -readable 2>/dev/null | while read hist; 
     if [ -n "$interesting" ]; then
         echo -e "  ${LRED}$hist:${NC}"
         echo "$interesting" | while read line; do echo -e "    ${CYAN}$line${NC}"; done
+        log_finding "HIGH" "Credentials/commands in $hist — check output above"
     fi
 done
 
@@ -1356,22 +1360,24 @@ echo -e "\n${LBLUE}╔═══════════════════�
 echo -e "${LBLUE}║            🦍 SUMMARY — ACTION ITEMS                      ║${NC}"
 echo -e "${LBLUE}╚═══════════════════════════════════════════════════════════╝${NC}"
 
-critical_count=$(grep -c "^CRITICAL|" "$FINDINGS_FILE" 2>/dev/null || echo 0)
-high_count=$(grep -c "^HIGH|" "$FINDINGS_FILE" 2>/dev/null || echo 0)
+critical_count=$(grep -c "^CRITICAL|" "$FINDINGS_FILE" 2>/dev/null)
+critical_count=${critical_count:-0}
+high_count=$(grep -c "^HIGH|" "$FINDINGS_FILE" 2>/dev/null)
+high_count=${high_count:-0}
 total=$((critical_count + high_count))
 
-if [ $total -eq 0 ]; then
+if [ "$total" -eq 0 ]; then
     echo -e "\n${GREEN}  No critical or high-priority vectors found.${NC}"
     echo -e "${YELLOW}  Manual investigation needed — check output above for leads.${NC}"
 else
-    if [ $critical_count -gt 0 ]; then
+    if [ "$critical_count" -gt 0 ]; then
         echo -e "\n${LRED}  ══════ CRITICAL — Try these FIRST ══════${NC}"
         grep "^CRITICAL|" "$FINDINGS_FILE" 2>/dev/null | cut -d'|' -f2 | while read line; do
             echo -e "  ${LRED}🔴 $line${NC}"
         done
     fi
 
-    if [ $high_count -gt 0 ]; then
+    if [ "$high_count" -gt 0 ]; then
         echo -e "\n${YELLOW}  ══════ HIGH — Investigate these ══════${NC}"
         grep "^HIGH|" "$FINDINGS_FILE" 2>/dev/null | cut -d'|' -f2 | while read line; do
             echo -e "  ${YELLOW}🟡 $line${NC}"
