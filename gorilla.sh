@@ -710,23 +710,35 @@ echo -e "\n${YELLOW}[+] ${NC}Baron Samedit (CVE-2021-3156):"
 sudo_version=$(sudo -V 2>/dev/null | head -1 | cut -d " " -f3)
 if [ ! -z "$sudo_version" ]; then
     echo -e "  sudo version: ${CYAN}$sudo_version${NC}"
-    sudoedit_test=$(sudoedit -s / 2>&1)
-    if echo "$sudoedit_test" | grep -q "not a regular file"; then
-        echo -e "\033[1;31;103m VULNERABLE — Baron Samedit \033[0m"
+    # Non-interactive test — check version range instead of running sudoedit
+    sudo_major=$(echo "$sudo_version" | cut -d. -f1)
+    sudo_minor=$(echo "$sudo_version" | cut -d. -f2)
+    sudo_patch=$(echo "$sudo_version" | cut -d. -f3 | sed 's/p.*//')
+    vulnerable=0
+    # Vulnerable: 1.8.2 through 1.8.31p2, and 1.9.0 through 1.9.5p1
+    if [ "$sudo_major" = "1" ] && [ "$sudo_minor" = "8" ]; then
+        if [ "${sudo_patch:-0}" -ge 2 ] && [ "${sudo_patch:-0}" -le 31 ]; then
+            vulnerable=1
+        fi
+    elif [ "$sudo_major" = "1" ] && [ "$sudo_minor" = "9" ]; then
+        if [ "${sudo_patch:-0}" -le 5 ]; then
+            vulnerable=1
+        fi
+    fi
+    if [ $vulnerable -eq 1 ]; then
+        echo -e "\033[1;31;103m LIKELY VULNERABLE — sudo $sudo_version in affected range \033[0m"
         echo -e "  ${LMAGENTA}Exploit: https://github.com/blasty/CVE-2021-3156${NC}"
-    elif echo "$sudoedit_test" | grep -q "usage:"; then
-        echo -e "${GREEN}Not vulnerable (patched)${NC}"
+        echo -e "  ${LMAGENTA}Test: sudoedit -s '\\' \$(python3 -c \"print('A'*100)\") — segfault = vuln${NC}"
     else
-        echo -e "${YELLOW}Uncertain — manual check needed${NC}"
+        echo -e "${GREEN}Not vulnerable (sudo $sudo_version outside affected range)${NC}"
     fi
 
     # Additional sudo CVEs
-    sudo_ver_num=$(echo "$sudo_version" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' 2>/dev/null || echo "$sudo_version")
-    if [[ "$sudo_ver_num" < "1.8.26" ]] 2>/dev/null; then
+    if [ "$sudo_major" = "1" ] && [ "$sudo_minor" = "8" ] && [ "${sudo_patch:-0}" -lt 26 ]; then
         echo -e "\033[1;31;103m CVE-2019-18634 (pwfeedback buffer overflow) \033[0m"
         echo -e "  ${LMAGENTA}https://github.com/saleemrashid/sudo-cve-2019-18634${NC}"
     fi
-    if [[ "$sudo_ver_num" < "1.8.28" ]] 2>/dev/null; then
+    if [ "$sudo_major" = "1" ] && [ "$sudo_minor" = "8" ] && [ "${sudo_patch:-0}" -lt 28 ]; then
         echo -e "\033[1;31;103m Sudo < 1.8.28 — User ID bypass \033[0m"
         echo -e "  ${LMAGENTA}sudo -u#-1 /bin/bash${NC}"
     fi
@@ -813,7 +825,7 @@ check_sudo_exploits() {
 }
 
 echo -e "\n${YELLOW}[+] ${NC}Passwordless sudo check:"
-sudo_nopass=$(echo '' | sudo -S -l -k 2>/dev/null)
+sudo_nopass=$(sudo -n -l 2>/dev/null)
 if [ "$sudo_nopass" ]; then
     check_sudo_exploits "$sudo_nopass"
 else
