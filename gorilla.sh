@@ -707,12 +707,12 @@ fi
 
 # Baron Samedit
 echo -e "\n${YELLOW}[+] ${NC}Baron Samedit (CVE-2021-3156):"
-sudo_version=$(sudo --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9p]+')
-if [ -z "$sudo_version" ]; then
-    sudo_version=$(dpkg -l sudo 2>/dev/null | grep ^ii | awk '{print $3}' | cut -d- -f1 | cut -d: -f2)
-fi
+sudo_version=$(dpkg -l sudo 2>/dev/null | grep ^ii | awk '{print $3}' | cut -d- -f1 | cut -d: -f2)
 if [ -z "$sudo_version" ]; then
     sudo_version=$(rpm -q sudo 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9p]+' | head -1)
+fi
+if [ -z "$sudo_version" ]; then
+    sudo_version=$(apt-cache policy sudo 2>/dev/null | grep Installed | grep -oE '[0-9]+\.[0-9]+\.[0-9p]+')
 fi
 if [ ! -z "$sudo_version" ]; then
     echo -e "  sudo version: ${CYAN}$sudo_version${NC}"
